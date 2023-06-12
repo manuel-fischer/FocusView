@@ -1,0 +1,6 @@
+[Desktop Entry]
+Exec=/usr/bin/focus_view %f
+Name=Focus View
+Terminal=false
+Type=Application
+Icon=/usr/bin/focus_view_icon.png

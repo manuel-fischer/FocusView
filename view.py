@@ -5,10 +5,11 @@
 # pip install pypdfium2
 # pip install customtkinter
 from dataclasses import dataclass, field, asdict
+import random
 from typing import Callable, Dict, List, Protocol, Set, Tuple
 import customtkinter
-from customtkinter import * # CTk*
-import tkinter
+#from customtkinter import * # CTk*
+from customtkinter import CTk, CTkButton, CTkFrame, CTkCanvas, CTkToplevel, BOTH, TOP
 from PIL import Image, ImageTk, ImageOps, ImageChops, ImageFilter
 
 from functools import partial
@@ -16,13 +17,13 @@ from functools import partial
 import pypdfium2 as pdfium
 import sys
 
-import functools
 import bisect
 import json
 
 import tempfile
 import subprocess
 import math
+import os
 
 
 from weakref import WeakValueDictionary
@@ -30,11 +31,15 @@ from weakref import WeakValueDictionary
 
 
 def run_exec(cmd):
-    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    result = subprocess.run(cmd)
+    result.check_returncode()
+
+    #result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     #if result.stdout or result.stderr or result.returncode:
     #    msg = f"stdout:\n{result.stdout.decode()}\n\nstderr:\n{result.stderr.decode()}\n\nreturncode:\n{result.returncode}"
     #    print(msg)
     #    tkinter.messagebox.showerror(message=msg)
+    #result.check_returncode()
 
 
 
@@ -93,25 +98,39 @@ def make_flattened_clip_container(clip_container_list: ClipContainerList) -> Tup
     return FlattenedClipContainer(subclips=clips), offsets
 
 
+Color = Tuple[float, float, float]
 
 @dataclass
 class ClipStyle:
-    mark_color : Tuple[float, float, float]
+    mark_color : Color
+    mark_color_black : Color = field(default=(0,0,0))
 
     @classmethod
     def fromdict(cls, obj: dict):
         obj = dict(obj) # copy
         obj["mark_color"] = tuple(obj["mark_color"])
+        obj["mark_color_black"] = tuple(obj["mark_color_black"]) if "mark_color_black" in obj else (0, 0, 0)
         return cls(**obj)
 
     def asdict(self):
-        return asdict(self)
+        d = asdict(self)
+        if self.mark_color_black == (0, 0, 0): del d["mark_color_black"]
+        return d
 
     def apply(self, img):
-        R,G,B = self.mark_color
-        R/=255;G/=255;B/=255
-        filter = ImageFilter.Color3DLUT.generate(2, lambda r,g,b: (r*R,g*G,b*B), target_mode="RGB")
+        R0,G0,B0 = self.mark_color_black
+        R0/=255;G0/=255;B0/=255
+
+        R1,G1,B1 = self.mark_color
+        R1/=255;G1/=255;B1/=255
+
+        R,G,B = R1-R0, G1-G0, B1-B0
+
+        filter = ImageFilter.Color3DLUT.generate(2, lambda r,g,b: (R0+r*R,G0+g*G,B0+b*B), target_mode="RGB")
         return img.filter(filter)
+
+    def is_like(self, other):
+        return self.mark_color == other.mark_color and self.mark_color_black == other.mark_color_black
 
 
 @dataclass
@@ -530,15 +549,19 @@ def CTkButtonWith(master, **k):
 
     return inner
 
-def bind(object, func_name):
+def bind(object, func_name : str, case:bool=True):
     def inner(event_handler):
         object.bind(func_name, event_handler)
+        if not case:
+            object.bind(func_name.swapcase(), event_handler)
         return event_handler
     return inner
 
-def bind_all(object, func_name):
+def bind_all(object, func_name : str, case:bool=True):
     def inner(event_handler):
         object.bind_all(func_name, event_handler)
+        if not case:
+            object.bind_all(func_name.swapcase(), event_handler)
         return event_handler
     return inner
 
@@ -566,6 +589,14 @@ def rgb_space(func):
     return map
 #N = 2
 N = 32
+
+blue_filter_color = lambda r,g,b: [
+    r*1.1,
+    g*0.9,
+    b*0.6
+]
+
+
 invert_dark_mode_filter = ImageFilter.Color3DLUT.generate(
     size=N,
     callback=rgb_space(lambda r,g,b: [
@@ -604,11 +635,7 @@ invert_dark_mode_low_filter = ImageFilter.Color3DLUT.generate(
 )
 reduced_blue_mode_filter = ImageFilter.Color3DLUT.generate(
     size=N,
-    callback=rgb_space(lambda r,g,b: [
-        r*1.1,
-        g*0.9,
-        b*0.6
-    ]),
+    callback=rgb_space(blue_filter_color),
     target_mode="RGB"
 )
 
@@ -632,8 +659,8 @@ class HackersMode:
         ],
         target_mode="RGB"
     )
-    blur_filter = ImageFilter.GaussianBlur(radius=10)
-    blur_filter2 = ImageFilter.GaussianBlur(radius=3)
+    blur_filter = ImageFilter.GaussianBlur(radius=4) #10
+    blur_filter2 = ImageFilter.GaussianBlur(radius=2) #3
 
     def __init__(self, rf, gf, bf, light_up=False, glow_factor=0.25):
         self.color_filter = ImageFilter.Color3DLUT.generate(
@@ -764,6 +791,7 @@ visual_effects_list = [
     ("#000000", VisualEffect(HackersMode(1.1,0.3,1.1).do_filter, DARK_ARGS)),
     ("#000000", VisualEffect(HackersMode(1.1,0.8,0.2).do_filter, DARK_ARGS)),
     ("#000000", VisualEffect(HackersMode(1.1,0.5,0.1).do_filter, DARK_ARGS)),
+    ("#000000", VisualEffect(HackersMode(1.2,0.1,0.1).do_filter, DARK_ARGS)),
     ("#000000", VisualEffect(HackersMode(1.0,0.05,0.2).do_filter, DARK_ARGS)),
     ("#000000", VisualEffect(HackersMode(0.1,0.1,1.0).do_filter, DARK_ARGS)),
     ("#000000", VisualEffect(HackersMode(0.2,0.9,1.0).do_filter, DARK_ARGS)),
@@ -1263,7 +1291,7 @@ def get_minimal_bounds(img):
     )
 
     img = img.filter(map_distance)
-    img.save("tmp_image.png")
+    #img.save("tmp_image.png")
 
     BG = (0,0,0)
     F = 1
@@ -1435,11 +1463,28 @@ def show_image(name, document: IDocument, clip_pages: ClipContainerList, visual_
         "#e0e0e0",
     ]))
 
+    STYLE_COLORS_BLACK = list(map(hex_to_float, [
+        "#ffffff",
+        "#e00000",
+        "#e06000",
+        "#e0c000",
+        "#00c000",
+        "#00c0ff",
+        "#0000ff",
+        "#e000ff",
+        "#404040",
+        #"#808080",
+        "#a0a0a0",
+    ]))
+
     def set_style(i, event):
-        if i == 0:
-            new_style = None
+        if event.state & CONTROL_STATE_MASK:
+            new_style = ClipStyle((255, 255, 255), STYLE_COLORS_BLACK[i])
         else:
-            new_style = ClipStyle(STYLE_COLORS[i-1])
+            if i == 0:
+                new_style = None
+            else:
+                new_style = ClipStyle(STYLE_COLORS[i-1])
 
 
         sel = page_viewer.selection
@@ -1558,6 +1603,23 @@ def show_image(name, document: IDocument, clip_pages: ClipContainerList, visual_
         idx = page_viewer.selection
         shrink_to_fit_idx(idx)
 
+    @bind(root, "E")
+    def expand(event):
+        idx = page_viewer.selection
+
+        if idx is None: return
+        clip_rect = tuple(page_viewer.rects[idx])
+
+        x0, y0, x1, y1 = clip_rect
+        ix0, iy0, ix1, iy1 = page_viewer.image_rect
+        dx = 2/(ix1-ix0)
+        dy = 2/(iy1-iy0)
+        exp_rect = (x0-dx, y0-dy, x1+dx, y1+dy)
+
+        page_viewer.set_rect(idx, exp_rect)
+
+        clip_pages[dpage.page_number].subclips[idx].rect = Rectangle(*exp_rect)
+
     #@bind(root, "<Key>")
     #def on_key(event):
     #    print(event)
@@ -1616,6 +1678,51 @@ def show_image(name, document: IDocument, clip_pages: ClipContainerList, visual_
         update_viewer_rects()
 
 
+    ANIMATION_UPDATE_TIME = 20
+    screensaver_enabled = False
+    scr_timer = None
+    scr_avx, scr_avy = 3/5, 4/5
+    scr_vx, scr_vy = +scr_avx, scr_avy
+    scr_speed = 2
+    def screensaver_tick():
+        nonlocal scr_timer, scr_vx, scr_vy
+        #print("Update")
+        scr_timer = root.after(ANIMATION_UPDATE_TIME, screensaver_tick)
+
+        pan(scr_vx, scr_vy, scr_speed, to_border=False, no_clip=True)
+
+        x0, y0, x1, y1 = page_viewer.image_rect
+        w = page_viewer.winfo_width()
+        h = page_viewer.winfo_height()
+
+        if w >= x1-x0:
+            if x0 < 0: scr_vx = -scr_avx
+            if x1 > w: scr_vx = +scr_avx
+        else:
+            if x0 > 0: scr_vx = +scr_avx
+            if x1 < w: scr_vx = -scr_avx
+
+        if h >= y1-y0:
+            if y0 < 0: scr_vy = -scr_avy
+            if y1 > h: scr_vy = +scr_avy
+        else:
+            if y0 > 0: scr_vy = +scr_avy
+            if y1 < h: scr_vy = -scr_avy
+
+    @bind(root, "o")
+    def toggle_screensaver(event):
+        nonlocal screensaver_enabled, scr_timer
+        screensaver_enabled = not screensaver_enabled
+
+        if screensaver_enabled:
+            scr_vx = random.choice([+scr_avx, -scr_avx])
+            scr_vy = random.choice([+scr_avy, -scr_avy])
+            screensaver_tick()
+        else:
+            root.after_cancel(scr_timer)
+            scr_timer = None
+
+
     def delta_for(event):
         return 10 if event.state & CONTROL_STATE_MASK else 1
 
@@ -1623,7 +1730,6 @@ def show_image(name, document: IDocument, clip_pages: ClipContainerList, visual_
     #@bind(root, "k")
     @bind(root, "<Up>")
     @bind(root, "<Left>")
-    @bind(root, "<Button-4>")
     def prev(event):
         set_page(delta=-delta_for(event))
 
@@ -1633,41 +1739,84 @@ def show_image(name, document: IDocument, clip_pages: ClipContainerList, visual_
     @bind(root, "<Return>")
     @bind(root, "<Down>")
     @bind(root, "<Right>")
-    @bind(root, "<Button-5>")
     def next(event):
         set_page(delta=+delta_for(event))
 
-    def pan(dx, dy, delta, to_border: bool):
-
+    def pan(dx, dy, delta, to_border: bool, no_clip = False):
         x, y = page_viewer.pos_offset
+
+        rx0, ry0, rx1, ry1 = page_viewer.image_rect
+        w, h = page_viewer.canvas.winfo_width(), page_viewer.canvas.winfo_height()
+
+        if not no_clip and not to_border and dy and -dy*y >= (ry1-ry0 - h)//2:
+            if set_page(delta=dy):
+                dy = -dy
+            to_border = True
+
         if to_border:
             x *= not dx
             y *= not dy
-
-            rx0, ry0, rx1, ry1 = page_viewer.image_rect
-            w, h = page_viewer.canvas.winfo_width(), page_viewer.canvas.winfo_height()
 
             px = (rx1-rx0 - w)//2 * dx
             py = (ry1-ry0 - h)//2 * dy
             page_viewer.pos_offset = (x-px, y-py)
         else:
             page_viewer.pos_offset = (x-delta*dx, y-delta*dy)
+
+        if not no_clip and w > rx1-rx0:
+            page_viewer.pos_offset = (0, page_viewer.pos_offset[1])
+        if not no_clip and h > ry1-ry0:
+            page_viewer.pos_offset = (page_viewer.pos_offset[0], 0)
+
         page_viewer.redraw_canvas()
 
 
     def handle_pan(event, dx, dy):
-        delta = 160 if event.state & ALT_STATE_MASK else 40
+        delta = 160 if event.state & SHIFT_STATE_MASK else 40
         to_border = event.state & CONTROL_STATE_MASK
-        pan(dx, dy, delta, to_border)
+        no_clip = event.state & ALT_STATE_MASK
+        pan(dx, dy, delta, to_border, no_clip)
 
-    @bind(root, "h")
+    @bind(root, "h", case=False)
     def pan_left(event): handle_pan(event, -1, 0)
-    @bind(root, "j")
+    @bind(root, "j", case=False)
     def pan_down(event): handle_pan(event, 0, 1)
-    @bind(root, "k")
+    @bind(root, "k", case=False)
     def pan_up(event): handle_pan(event, 0, -1)
-    @bind(root, "l")
+    @bind(root, "l", case=False)
     def pan_right(event): handle_pan(event, 1, 0)
+
+
+    def handle_scroll_pan(event, direction):
+        delta=40
+        dx, dy = [(0, direction), (direction, 0)][bool(event.state & SHIFT_STATE_MASK)]
+        to_border = event.state & CONTROL_STATE_MASK
+        no_clip = event.state & ALT_STATE_MASK
+        pan(dx, dy, delta, to_border, no_clip)
+
+    @bind_all(root, "<MouseWheel>")
+    def scroll(event):
+        #set_page(delta=-event.delta/120)
+        print(event)
+        handle_scroll_pan(event, -event.delta/120)
+    @bind(root, "<Button-4>")
+    def scroll_up(event):
+        handle_scroll_pan(event, -1)
+    @bind(root, "<Button-5>")
+    def scroll_down(event):
+        handle_scroll_pan(event, 1)
+
+
+    @bind(root, "<KeyPress>")
+    def keypress(event):
+        # LASER-Pointer
+        if event.keycode == 112:
+            handle_scroll_pan(event, -1)
+        if event.keycode == 117:
+            handle_scroll_pan(event, 1)
+
+
+        #print(event)
 
     @bind(root, "n")
     def next_page(event):
@@ -1701,10 +1850,6 @@ def show_image(name, document: IDocument, clip_pages: ClipContainerList, visual_
         print("Sorting elements")
         clip_pages[dpage.page_number].subclips.sort(key=lambda clip: clip.rect.y0)
         update_viewer_rects()
-
-    @bind_all(root, "<MouseWheel>")
-    def scroll(event):
-        set_page(delta=-event.delta/120)
 
 
 
@@ -1774,7 +1919,7 @@ def show_image(name, document: IDocument, clip_pages: ClipContainerList, visual_
 
         if page_viewer.selection is not None and not (event.state & CONTROL_STATE_MASK):
             style = clip_pages[dpage.page_number].subclips[page_viewer.selection].style
-            clip_pred = lambda clip: clip.style == style or ((clip.style and style) and (clip.style.mark_color == style.mark_color))
+            clip_pred = lambda clip: clip.style == style or ((clip.style and style) and (clip.style.is_like(style)))
         else:
             clip_pred = lambda clip: True
 
@@ -1882,6 +2027,15 @@ def show_image(name, document: IDocument, clip_pages: ClipContainerList, visual_
         #new_page.generate_content() # completed
 
         CAIRO_ARGS = []
+        CAIRO_PDF_ARGS = []
+        #CAIRO_PDF_ARGS += ["-noembcidtt"]
+        #CAIRO_PDF_ARGS = ["-antialias=best", "-origpagesizes"]
+        CAIRO_PDF_ARGS += ["-origpagesizes", "-nocenter"]
+        #xx, yy, ww, hh = page_clip[0], page_size[1]-page_clip[3], page_clip[2], page_size[1]-page_clip[1]
+        #xx, yy, ww, hh = map(int, (xx, yy, ww, hh))
+        #CAIRO_PDF_ARGS += f"-x {xx} -y {yy} -W {ww} -H {hh}".split()
+        CAIRO_PNG_ARGS = []
+        #CAIRO_PNG_ARGS +=["-cropbox"]
 
         dir_filename = make_clip_directory()
         clip_filename = make_clip_filename(dir_filename, page_index, clip, "pdf")
@@ -1893,8 +2047,11 @@ def show_image(name, document: IDocument, clip_pages: ClipContainerList, visual_
             with open(tf.name, "wb") as f:
                 doc.save(f)
 
+            try: os.remove(clip_filename)
+            except FileNotFoundError: pass
+
             #run_exec(["pdfcrop", tf.name, clip_filename])
-            run_exec(["pdftocairo", "-pdf", *CAIRO_ARGS, tf.name, clip_filename])
+            run_exec(["pdftocairo", *CAIRO_PDF_ARGS, "-pdf", *CAIRO_ARGS, tf.name, clip_filename])
 
             run_exec(["which", "pdftex"])
 
@@ -1910,13 +2067,15 @@ def show_image(name, document: IDocument, clip_pages: ClipContainerList, visual_
         #run_exec(["pdftocairo", "-svg", *CAIRO_ARGS, clip_filename, svg_filename])
         #copyname = svg_filename
         png_filename = clip_filename+".png"
-        run_exec(["pdftocairo", *CAIRO_ARGS, "-singlefile", "-png", clip_filename, png_filename[:-4]])
+        run_exec(["pdftocairo", *CAIRO_PNG_ARGS, *CAIRO_ARGS, "-singlefile", "-png", clip_filename, png_filename[:-4]])
 
         if event.state & CONTROL_STATE_MASK:
             img = Image.open(png_filename)
             def ceildivi(a, d): return int((a+d-1)/d)
-            img = img.resize((ceildivi(img.width,1.5), ceildivi(img.height,1.5)), resample=Image.LANCZOS)
-            img = page_viewer.visual_effect_func(img)
+            if not(event.state & ALT_STATE_MASK):
+                img = img.resize((ceildivi(img.width,1.5), ceildivi(img.height,1.5)), resample=Image.LANCZOS)
+            if page_viewer.visual_effect_func is not None:
+                img = page_viewer.visual_effect_func(img)
             img.save(png_filename)
         copyname = png_filename
 
